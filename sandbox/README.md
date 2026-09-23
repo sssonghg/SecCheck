@@ -6,7 +6,7 @@ Spring Boot 취약 애플리케이션을 Docker 컨테이너에서 실행하고
 
 ## Runtime
 
-- Java: 17
+- Java: 21
 - Build Tool: Gradle
 - Database: H2
 
