@@ -19,5 +19,6 @@ public class TaintedVariable {
                 lineNumber, type, variableName, sourceAnnotation);
     }
 
-    // getter는 필요할 때 추가
+    public String getVariableName() { return variableName; }
+    public String getSourceAnnotation() { return sourceAnnotation; }
 }
