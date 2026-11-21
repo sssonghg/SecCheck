@@ -3,6 +3,7 @@ package com.vulnapp.cmd_vuln_app.controller;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.PathVariable;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
@@ -23,6 +24,19 @@ public class CommandController {
 		}
 		process.waitFor();
 
+		return output.toString();
+	}
+
+	@GetMapping("/vuln/command/{cmd}")
+	public String runCommandByPath(@PathVariable String cmd) throws Exception {
+		Process process = Runtime.getRuntime().exec(cmd);
+		BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+		StringBuilder output = new StringBuilder();
+		String line;
+		while ((line = reader.readLine()) != null) {
+			output.append(line).append("\n");
+		}
+		process.waitFor();
 		return output.toString();
 	}
 
