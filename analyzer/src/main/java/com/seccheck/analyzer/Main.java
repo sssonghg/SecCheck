@@ -1,4 +1,3 @@
-// Main.java
 package com.seccheck.analyzer;
 
 import com.github.javaparser.StaticJavaParser;
@@ -12,7 +11,7 @@ import java.util.List;
 
 public class Main {
     public static void main(String[] args) throws Exception {
-        File targetFile = new File("C:\\Users\\이서연\\intellij\\SecCheck\\vulnerable-app\\sql-vuln-app\\src\\main\\java\\com\\vulnapp\\sql_vuln_app\\controller\\SqlController.java");
+        File targetFile = new File("C:\\Users\\seoyeon\\intellij\\SecCheck\\vulnerable-app\\sql-vuln-app\\src\\main\\java\\com\\vulnapp\\sql_vuln_app\\controller\\SqlController.java");
         CompilationUnit cu = StaticJavaParser.parse(targetFile);
 
         // Source 식별
@@ -36,11 +35,16 @@ public class Main {
         boolean found = false;
         for (SinkCall sink : sinkResults) {
             for (TaintedVariable source : sourceResults) {
-                if (sink.getArgumentName().equals(source.getVariableName())) {
-                    System.out.println("취약점 발견: " + source.getVariableName()
+                // 같은 메서드 안에 있고(= 같은 반) + 변수 이름이 같을 때만 연결
+                boolean sameMethod = sink.getEnclosingMethod().equals(source.getEnclosingMethod());
+                boolean sameName = sink.getArgumentName().equals(source.getVariableName());
+
+                if (sameMethod && sameName) {
+                    System.out.println("취약점 발견: [" + sink.getEnclosingMethod() + "] "
+                            + source.getVariableName()
                             + " (" + source.getSourceAnnotation() + ")"
                             + " -> " + sink.getMethodName()
-                            + " (" + sink.getVulnerabilityType() + ")");
+                            + " (" + sink.getVulnerabilityType() + ", Line " + sink.getLineNumber() + ")");
                     found = true;
                 }
             }
