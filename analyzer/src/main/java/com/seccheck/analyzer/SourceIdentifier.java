@@ -32,7 +32,8 @@ public class SourceIdentifier extends VoidVisitorAdapter<List<TaintedVariable>> 
                         param.getNameAsString(),
                         param.getTypeAsString(),
                         line,
-                        sourceAnno
+                        sourceAnno,
+                        method.getNameAsString()
                 ));
             }
         }
