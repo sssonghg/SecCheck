@@ -1,3 +1,5 @@
+import os
+import tempfile
 import time
 import urllib.request
 import docker
@@ -24,16 +26,32 @@ for app_name, port in apps.items():
 
     print("Docker 이미지 빌드 완료:", image.tags)
 
+    run_dir = Path(tempfile.mkdtemp(prefix="seccheck-"))
+    os.chmod(run_dir, 0o777)
+
     container = client.containers.run(
         image = f"seccheck-{app_name}",
         name = f"seccheck-{app_name}-container",
         ports = {f"{port}/tcp": port},
         detach = True,
         mem_limit = "512m",
-        nano_cpus = 1000000000
+        nano_cpus = 1000000000,
+        read_only = True,
+        tmpfs = {"/tmp": ""},
+        volumes = {
+            str(run_dir): {
+                "bind": "/seccheck",
+                "mode": "rw"
+            }
+        }
     )
 
     print("컨테이너 실행 완료:", container.name)
+
+    result = container.exec_run(
+        "sh -c 'echo test > /seccheck/test.txt'"
+    )
+    print("이벤트 폴더 쓰기 테스트:", result.exit_code)
 
     url = f"http://localhost:{port}/actuator/health"
 
