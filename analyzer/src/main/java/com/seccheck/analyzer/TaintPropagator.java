@@ -1,12 +1,8 @@
 package com.seccheck.analyzer;
 
-import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.Node;
-import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
-import com.github.javaparser.ast.body.FieldDeclaration;
 import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.body.Parameter;
-import com.github.javaparser.ast.body.RecordDeclaration;
 import com.github.javaparser.ast.body.VariableDeclarator;
 import com.github.javaparser.ast.expr.AssignExpr;
 import com.github.javaparser.ast.expr.BinaryExpr;
@@ -25,6 +21,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Source 에서 시작한 오염(taint)을 다른 변수로 옮긴다.
@@ -38,6 +35,9 @@ import java.util.Set;
  *   1. 선언      String sql = ...;
  *   2. 대입      sql = ...;   sql += ...;
  *   3. 덧붙이기   sb.append(name);   sb.insert(0, name);   (sb 자체가 오염됨)
+ *
+ * 출처는 여러 개를 기억한다.
+ *   "..." + req.getUsername() + req.getEmail()  →  fields = [req.username, req.email]
  */
 public class TaintPropagator extends VoidVisitorAdapter<List<TaintedVariable>> {
 
@@ -77,37 +77,67 @@ public class TaintPropagator extends VoidVisitorAdapter<List<TaintedVariable>> {
     );
 
     /**
-     * 오염 정보
-     * @param via   바로 앞 출처 (예: "name", "req.username")
-     * @param root  처음 시작된 파라미터 (예: "name", "req")
-     * @param field DTO 필드에서 왔으면 필드 이름, 아니면 null
+     * 숫자·참거짓 타입 → 오염을 옮기지 않음.
+     * ?size=' OR 1=1 을 보내면 Spring 이 숫자 변환에 실패해서 400 에러 → 공격 문자열이 SQL 까지 못 감.
+     * (char 는 ' 한 글자로도 SQL 을 깰 수 있어서 넣지 않음)
      */
-    private record Taint(String via, String root, String field) {
+    private static final Set<String> NUMERIC_TYPES = Set.of(
+            "int", "long", "short", "byte", "double", "float", "boolean",
+            "Integer", "Long", "Short", "Byte", "Double", "Float", "Boolean",
+            "BigDecimal", "BigInteger"
+    );
+
+    /**
+     * 오염 정보
+     * @param vias   바로 앞 출처들 (예: [u, req.email])  → "derived from ..." 문구용
+     * @param roots  처음 시작된 파라미터들 (예: [req])
+     * @param fields DTO 필드 출처들, "파라미터.필드" (예: [req.username, req.email])
+     */
+    private record Taint(Set<String> vias, Set<String> roots, Set<String> fields) {
+        static Taint of(String via, Set<String> roots, Set<String> fields) {
+            return new Taint(Set.of(via), roots, fields);
+        }
     }
 
     /** "메서드이름#변수이름" → 오염 정보 (1반 철수, 2반 철수 구분) */
     private final Map<String, Taint> tainted = new HashMap<>();
-    /** DTO 클래스 이름 → 필드 이름들 */
-    private final Map<String, Set<String>> dtoFields = new HashMap<>();
-    /** DTO 클래스 이름 → 부모 클래스 이름 (상속받은 필드 찾기용) */
-    private final Map<String, String> dtoParent = new HashMap<>();
+    private final DtoIndex dtoIndex;
 
     /**
      * @param initialSources SourceIdentifier 결과
-     * @param allUnits       프로젝트 전체 CompilationUnit (DTO 클래스 필드를 찾으려고 필요)
+     * @param dtoIndex       프로젝트 DTO 필드 목록 (getter 전파 판단용)
      */
-    public TaintPropagator(List<TaintedVariable> initialSources, List<CompilationUnit> allUnits) {
+    public TaintPropagator(List<TaintedVariable> initialSources, DtoIndex dtoIndex) {
+        this.dtoIndex = dtoIndex;
         for (TaintedVariable v : initialSources) {
             tainted.put(key(v.getEnclosingMethod(), v.getVariableName()),
-                    new Taint(v.getVariableName(), v.getRootSource(), v.getDtoField()));
-        }
-        for (CompilationUnit cu : allUnits) {
-            indexDtoFields(cu);
+                    Taint.of(v.getVariableName(), v.getRootSources(), v.getDtoFields()));
         }
     }
 
     private static String key(String method, String variable) {
         return method + "#" + variable;
+    }
+
+    // ------------------------------------------------------------------ Sink 판정
+
+    /**
+     * Sink 의 위험한 인자 식이 오염됐는지 판단한다. visit(...) 으로 전파를 끝낸 뒤 호출.
+     * query(sql), query(sb.toString()), query("..." + name), query(name.trim()) 모두 같은 규칙으로 판단.
+     */
+    public List<TaintedSink> evaluateSinks(List<SinkCall> sinks) {
+        List<TaintedSink> result = new java.util.ArrayList<>();
+        for (SinkCall sink : sinks) {
+            Expression arg = sink.getArgumentExpr();
+            if (arg == null) {
+                continue;
+            }
+            Taint t = taintOrigin(arg, arg, sink.getEnclosingMethod());
+            if (t != null) {
+                result.add(new TaintedSink(sink, t.vias(), t.roots(), t.fields()));
+            }
+        }
+        return result;
     }
 
     // ------------------------------------------------------------------ 1. 선언: String sql = ...;
@@ -155,7 +185,7 @@ public class TaintPropagator extends VoidVisitorAdapter<List<TaintedVariable>> {
             return;
         }
         String method = methodOf(call);
-        Taint origin = firstTaintedArg(call.getArguments(), call, method);
+        Taint origin = taintedArgs(call.getArguments(), call, method);
         if (origin == null) {
             return;
         }
@@ -176,7 +206,10 @@ public class TaintPropagator extends VoidVisitorAdapter<List<TaintedVariable>> {
     private Taint taintOrigin(Expression e, Node at, String method) {
         if (e instanceof NameExpr name) {
             Taint t = tainted.get(key(method, name.getNameAsString()));
-            return t == null ? null : new Taint(name.getNameAsString(), t.root(), t.field());
+            if (t == null || NUMERIC_TYPES.contains(ParamRules.simpleType(declaredType(at, name.getNameAsString())))) {
+                return null; // 오염 아님, 또는 숫자 타입 (int page 등)
+            }
+            return Taint.of(name.getNameAsString(), t.roots(), t.fields());
         }
         if (e instanceof EnclosedExpr enclosed) {                         // ( ... )
             return taintOrigin(enclosed.getInner(), at, method);
@@ -184,20 +217,18 @@ public class TaintPropagator extends VoidVisitorAdapter<List<TaintedVariable>> {
         if (e instanceof CastExpr cast) {                                 // (String) x
             return taintOrigin(cast.getExpression(), at, method);
         }
-        if (e instanceof BinaryExpr bin) {                                // a + b
+        if (e instanceof BinaryExpr bin) {                                // a + b  → 양쪽 출처 다 합침
             if (bin.getOperator() != BinaryExpr.Operator.PLUS) {
                 return null; // 비교(==), 빼기 등은 글자가 이어지지 않음
             }
-            Taint left = taintOrigin(bin.getLeft(), at, method);
-            return left != null ? left : taintOrigin(bin.getRight(), at, method);
+            return merge(taintOrigin(bin.getLeft(), at, method), taintOrigin(bin.getRight(), at, method));
         }
         if (e instanceof ConditionalExpr cond) {                          // flag ? a : b
-            Taint then = taintOrigin(cond.getThenExpr(), at, method);
-            return then != null ? then : taintOrigin(cond.getElseExpr(), at, method);
+            return merge(taintOrigin(cond.getThenExpr(), at, method), taintOrigin(cond.getElseExpr(), at, method));
         }
         if (e instanceof ObjectCreationExpr create) {                     // new StringBuilder(name)
             return STRING_HOLDERS.contains(create.getType().getNameAsString())
-                    ? firstTaintedArg(create.getArguments(), at, method) : null;
+                    ? taintedArgs(create.getArguments(), at, method) : null;
         }
         if (e instanceof FieldAccessExpr fa && fa.getScope() instanceof NameExpr scope) {   // req.username
             return dtoFieldTaint(scope, fa.getNameAsString(), true, at, method);
@@ -214,7 +245,7 @@ public class TaintPropagator extends VoidVisitorAdapter<List<TaintedVariable>> {
 
         // String.format(...), String.join(...), String.valueOf(...)
         if (scope instanceof NameExpr s && s.getNameAsString().equals("String")) {
-            return STRING_STATIC.contains(name) ? firstTaintedArg(call.getArguments(), at, method) : null;
+            return STRING_STATIC.contains(name) ? taintedArgs(call.getArguments(), at, method) : null;
         }
 
         // req.getUsername() / req.isAdmin() / req.username()  (DTO 필드 꺼내기)
@@ -225,34 +256,29 @@ public class TaintPropagator extends VoidVisitorAdapter<List<TaintedVariable>> {
             }
         }
 
-        // sb.append(name) 의 결과(= sb) : sb 가 이미 오염이거나, 넣는 값이 오염이면 오염
+        // sb.append(name) 의 결과(= sb) : sb 출처 + 넣는 값 출처
         if (BUILDER_APPEND.contains(name)) {
             Taint fromScope = scope == null ? null : taintOrigin(scope, at, method);
-            return fromScope != null ? fromScope : firstTaintedArg(call.getArguments(), at, method);
+            return merge(fromScope, taintedArgs(call.getArguments(), at, method));
         }
 
         // name.trim(), name.substring(..), sb.toString() ...
         if (STRING_PRESERVING.contains(name)) {
             Taint fromScope = scope == null ? null : taintOrigin(scope, at, method);
-            if (fromScope != null) {
-                return fromScope;
-            }
-            // "SELECT ... %s".formatted(name),  base.replace("X", name) : 인자의 글자가 결과로 들어감
-            if (ARG_INTO_RESULT.contains(name)) {
-                return firstTaintedArg(call.getArguments(), at, method);
-            }
+            // "SELECT ... %s".formatted(name),  base.replace("X", name) : 인자의 글자도 결과로 들어감
+            Taint fromArgs = ARG_INTO_RESULT.contains(name) ? taintedArgs(call.getArguments(), at, method) : null;
+            return merge(fromScope, fromArgs);
         }
         return null; // name.length(), Runtime.exec(cmd), repo.findBy(name) 등 → 전파 안 함
     }
 
-    private Taint firstTaintedArg(List<Expression> args, Node at, String method) {
+    /** 인자들 중 오염된 것의 출처를 전부 합친다 */
+    private Taint taintedArgs(List<Expression> args, Node at, String method) {
+        Taint result = null;
         for (Expression arg : args) {
-            Taint origin = taintOrigin(arg, at, method);
-            if (origin != null) {
-                return origin;
-            }
+            result = merge(result, taintOrigin(arg, at, method));
         }
-        return null;
+        return result;
     }
 
     // ------------------------------------------------------------------ DTO 필드
@@ -268,26 +294,38 @@ public class TaintPropagator extends VoidVisitorAdapter<List<TaintedVariable>> {
         if (scopeTaint == null) {
             return null;
         }
-        String type = simpleType(declaredType(at, scope.getNameAsString()));
+        String type = ParamRules.simpleType(declaredType(at, scope.getNameAsString()));
         if (NON_DTO_TYPES.contains(type)) {
             return null; // String 등에 대한 name.length() 같은 호출은 여기서 걸러짐
         }
 
-        String field = isFieldUse ? member : getterToField(member);
-        boolean knownDto = dtoFields.containsKey(type);
-
-        if (knownDto) {
+        String field;
+        if (dtoIndex.isKnown(type)) {
             // 프로젝트 안의 DTO: 진짜 필드가 있을 때만 (getUsername → username, record 는 username())
-            if (field != null && hasField(type, field)) {
-                return new Taint(scope.getNameAsString() + "." + field, scopeTaint.root(), field);
+            String fromGetter = isFieldUse ? member : getterToField(member);
+            if (fromGetter != null && dtoIndex.hasField(type, fromGetter)) {
+                field = fromGetter;
+            } else if (!isFieldUse && dtoIndex.hasField(type, member)) {
+                field = member;
+            } else {
+                return null;
             }
-            if (!isFieldUse && hasField(type, member)) {
-                return new Taint(scope.getNameAsString() + "." + member, scopeTaint.root(), member);
+            String fieldType = ParamRules.simpleType(dtoIndex.fields(type).get(field));
+            if (NUMERIC_TYPES.contains(fieldType)) {
+                return null; // int size 같은 숫자 필드는 공격 문자열을 못 담음
             }
-            return null;
+        } else {
+            // 프로젝트 밖 클래스(라이브러리 등): getXxx()/isXxx() 관례만 인정
+            field = isFieldUse ? member : getterToField(member);
+            if (field == null) {
+                return null;
+            }
         }
-        // 프로젝트 밖 클래스(라이브러리 등): getXxx()/isXxx() 관례만 인정
-        return field == null ? null : new Taint(scope.getNameAsString() + "." + field, scopeTaint.root(), field);
+
+        Set<String> fields = scopeTaint.roots().stream()
+                .map(root -> root + "." + field)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        return Taint.of(scope.getNameAsString() + "." + field, scopeTaint.roots(), fields);
     }
 
     /** getUsername → username, isAdmin → admin, 그 외 → null */
@@ -306,51 +344,63 @@ public class TaintPropagator extends VoidVisitorAdapter<List<TaintedVariable>> {
         return Character.toLowerCase(rest.charAt(0)) + rest.substring(1);
     }
 
-    private void indexDtoFields(CompilationUnit cu) {
-        for (ClassOrInterfaceDeclaration c : cu.findAll(ClassOrInterfaceDeclaration.class)) {
-            if (c.isInterface()) {
-                continue;
-            }
-            Set<String> fields = new LinkedHashSet<>();
-            for (FieldDeclaration f : c.getFields()) {
-                if (!f.isStatic()) {
-                    f.getVariables().forEach(v -> fields.add(v.getNameAsString()));
-                }
-            }
-            dtoFields.put(c.getNameAsString(), fields);
-            c.getExtendedTypes().stream().findFirst()
-                    .ifPresent(parent -> dtoParent.put(c.getNameAsString(), parent.getNameAsString()));
-        }
-        for (RecordDeclaration r : cu.findAll(RecordDeclaration.class)) {   // record JoinRequest(String username, ...)
-            Set<String> fields = new LinkedHashSet<>();
-            r.getParameters().forEach(p -> fields.add(p.getNameAsString()));
-            dtoFields.put(r.getNameAsString(), fields);
-        }
-    }
-
-    /** 부모 클래스까지 올라가며 필드 찾기 */
-    private boolean hasField(String type, String field) {
-        String current = type;
-        for (int depth = 0; current != null && depth < 10; depth++) {
-            Set<String> fields = dtoFields.get(current);
-            if (fields != null && fields.contains(field)) {
-                return true;
-            }
-            current = dtoParent.get(current);
-        }
-        return false;
-    }
-
-    // ------------------------------------------------------------------ 유틸
+    // ------------------------------------------------------------------ 오염 등록
 
     private void markTainted(String name, String type, int line, Taint origin, String method,
                              List<TaintedVariable> collector) {
-        if (name.equals(origin.via()) || tainted.putIfAbsent(key(method, name), origin) != null) {
-            return; // 이미 오염으로 등록된 변수 (sql = sql + name 같은 경우 포함)
+        // 자기 자신에서 온 출처는 빼기 (sql = sql + name 의 sql)
+        Set<String> vias = new LinkedHashSet<>(origin.vias());
+        vias.remove(name);
+        if (vias.isEmpty()) {
+            return;
         }
-        collector.add(new TaintedVariable(name, type, line, "derived from " + origin.via(), method,
-                origin.root(), origin.field()));
+        String k = key(method, name);
+        Taint existing = tainted.get(k);
+
+        if (existing == null) {                                   // 처음 오염됨
+            Taint t = new Taint(vias, origin.roots(), origin.fields());
+            tainted.put(k, t);
+            collector.add(new TaintedVariable(name, type, line, "derived from " + String.join(", ", vias),
+                    method, t.roots(), t.fields()));
+            return;
+        }
+
+        // 이미 오염된 변수: 새 출처가 있으면 합친다 (sql = sql + req.getEmail())
+        if (existing.roots().containsAll(origin.roots()) && existing.fields().containsAll(origin.fields())) {
+            return;
+        }
+        Taint merged = merge(existing, new Taint(vias, origin.roots(), origin.fields()));
+        tainted.put(k, merged);
+        for (int i = 0; i < collector.size(); i++) {
+            TaintedVariable v = collector.get(i);
+            if (v.getEnclosingMethod().equals(method) && v.getVariableName().equals(name)) {
+                String label = v.getSourceAnnotation().startsWith("derived from")
+                        ? "derived from " + String.join(", ", merged.vias())
+                        : v.getSourceAnnotation();
+                collector.set(i, new TaintedVariable(name, v.getType(), v.getLineNumber(), label,
+                        method, merged.roots(), merged.fields()));
+                break;
+            }
+        }
     }
+
+    private static Taint merge(Taint a, Taint b) {
+        if (a == null) {
+            return b;
+        }
+        if (b == null) {
+            return a;
+        }
+        Set<String> vias = new LinkedHashSet<>(a.vias());
+        vias.addAll(b.vias());
+        Set<String> roots = new LinkedHashSet<>(a.roots());
+        roots.addAll(b.roots());
+        Set<String> fields = new LinkedHashSet<>(a.fields());
+        fields.addAll(b.fields());
+        return new Taint(vias, roots, fields);
+    }
+
+    // ------------------------------------------------------------------ 유틸
 
     @SuppressWarnings("unchecked")
     private String methodOf(Node node) {
@@ -380,12 +430,5 @@ public class TaintPropagator extends VoidVisitorAdapter<List<TaintedVariable>> {
                 .map(VariableDeclarator::getTypeAsString)
                 .findFirst()
                 .orElse("unknown");
-    }
-
-    /** "com.x.JoinRequest" / "List<String>" → "JoinRequest" / "List" */
-    private static String simpleType(String type) {
-        String noGeneric = type.replaceAll("<.*>", "").trim();
-        int dot = noGeneric.lastIndexOf('.');
-        return dot < 0 ? noGeneric : noGeneric.substring(dot + 1);
     }
 }
