@@ -36,4 +36,22 @@ class CommandControllerTest {
 
 		assertThat(response.getBody()).containsIgnoringCase("ping");
 	}
+
+	@Test
+	void 주소_중간에_명령어를_넣어도_실행된다() {
+		ResponseEntity<String> response = restTemplate.getForEntity(
+				"/vuln/command/{cmd}", String.class, pingCommand());
+
+		assertThat(response.getStatusCode().is2xxSuccessful()).isTrue();
+		assertThat(response.getBody()).containsIgnoringCase("ping");
+	}
+
+	@Test
+	void legacy_POST로_명령어를_보내면_실행된다() {
+		ResponseEntity<String> response = restTemplate.postForEntity(
+				"/vuln/command/legacy?cmd={cmd}", null, String.class, pingCommand());
+
+		assertThat(response.getStatusCode().is2xxSuccessful()).isTrue();
+		assertThat(response.getBody()).containsIgnoringCase("ping");
+	}
 }

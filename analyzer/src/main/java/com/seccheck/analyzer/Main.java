@@ -25,7 +25,7 @@ import java.util.stream.Stream;
 public class Main {
 
     private static final String DEFAULT_APP =
-            "C:\\Users\\seoyeon\\intellij\\SecCheck\\vulnerable-app\\sql-vuln-app";
+            "C:\\Users\\seoyeon\\intellij\\SecCheck\\vulnerable-app\\cmd-vuln-app";
 
     public static void main(String[] args) throws Exception {
         StaticJavaParser.getParserConfiguration()

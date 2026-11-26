@@ -33,4 +33,31 @@ class SpelControllerTest {
         assertThat(response.getStatusCode().is2xxSuccessful()).isTrue();
         assertThat(response.getBody()).isEqualTo("50");
     }
+
+    @Test
+    void 본문으로_수식을_보내도_계산된다() {
+        ResponseEntity<String> response = restTemplate.postForEntity(
+                "/vuln/spel/body", "1+1", String.class);
+
+        assertThat(response.getStatusCode().is2xxSuccessful()).isTrue();
+        assertThat(response.getBody()).isEqualTo("2");
+    }
+
+    @Test
+    void q_이름으로_수식을_보내면_계산된다() {
+        ResponseEntity<String> response = restTemplate.getForEntity(
+                "/vuln/spel/named?q={q}", String.class, "1+1");
+
+        assertThat(response.getStatusCode().is2xxSuccessful()).isTrue();
+        assertThat(response.getBody()).isEqualTo("2");
+    }
+
+    @Test
+    void repeat을_주면_결과가_반복된다() {
+        ResponseEntity<String> response = restTemplate.getForEntity(
+                "/vuln/spel/named?q={q}&repeat={repeat}", String.class, "1+1", 2);
+
+        assertThat(response.getStatusCode().is2xxSuccessful()).isTrue();
+        assertThat(response.getBody()).isEqualTo("22");
+    }
 }
