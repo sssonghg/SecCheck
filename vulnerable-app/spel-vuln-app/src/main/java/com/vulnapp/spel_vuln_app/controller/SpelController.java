@@ -29,4 +29,13 @@ public class SpelController {
         Object result = expression.getValue();
         return String.valueOf(result);
     }
+
+    // [4번-7] 이름표 + 공격 대상 아닌 파라미터
+    @GetMapping("/vuln/spel/named")
+    public String calculateNamed(@RequestParam("q") String expression,
+                                 @RequestParam(defaultValue = "1") int repeat) {
+        ExpressionParser parser = new SpelExpressionParser();
+        Object result = parser.parseExpression(expression).getValue();
+        return String.valueOf(result).repeat(Math.max(1, Math.min(repeat, 3)));
+    }
 }
