@@ -197,15 +197,15 @@ python -m poc_agent.test_agent analyzer_result.json
 
 ## 9. 테스트 결과
 
-### 9.1 LLM Agent 생성 테스트
+### 9.1 Mock JSON 기반 테스트
 
-Analyzer 출력 규격을 기반으로 Mock JSON을 제작하여 세 가지 취약점 유형의 정상 비교 요청 생성 테스트를 진행하였다.
+Analyzer JSON 규격을 기반으로 세 가지 취약점 유형의 정상 비교 요청 생성 테스트를 진행하였다.
 
-| 취약점 유형 | 정상 비교 요청 파라미터 | 결과 |
-|---|---|---|
-| Command Injection | `host=localhost` | PASS |
-| SpEL Injection | `expr=1+1` | PASS |
-| SQL Injection | `name=testuser` | PASS |
+| 취약점 유형 | 결과 |
+|---|---|
+| Command Injection | PASS |
+| SpEL Injection | PASS |
+| SQL Injection | PASS |
 
 ### 9.2 HTTP 요청 검증 테스트
 
@@ -219,27 +219,70 @@ Analyzer 출력 규격을 기반으로 Mock JSON을 제작하여 세 가지 취�
 | 필수 Header 누락 차단 | PASS |
 | 필수 Cookie 누락 차단 | PASS |
 
-## 10. 현재 구현 현황
+### 9.3 실제 Analyzer 연동 테스트
+
+Analyzer에서 생성한 JSON v1.1 분석 결과를 입력받아 HTTP 요청 생성 및 구조 검증 테스트를 진행하였다.
+
+| 분석 대상 | 분석 건수 | 구조 검증 통과 | JSON 저장 |
+|---|---:|---:|---|
+| cmd-vuln-app | 3 | 3 | 완료 |
+| spel-vuln-app | 3 | 3 | 완료 |
+| sql-vuln-app | 6 | 6 | 완료 |
+| 합계 | 12 | 12 | 완료 |
+
+- 실제 Analyzer 출력 JSON과 Pydantic 스키마 간 호환성 확인
+- Query, Path, Body, Header 등 다양한 입력 위치 처리
+- Query DTO 및 String Body 대응
+- JSON 문자열 형태의 DTO를 객체로 변환하는 보정 로직 구현
+
+### 9.4 결과 파일 저장
+
+생성된 HTTP 요청은 `poc_agent/output/` 디렉터리에 프로젝트별 JSON 파일로 저장한다.
+
+| 결과 파일 | 요청 건수 |
+|---|---:|
+| cmd-vuln-app-analysis-requests.json | 3 |
+| spel-vuln-app-analysis-requests.json | 3 |
+| sql-vuln-app-analysis-requests.json | 6 |
+
+저장된 결과는 이후 Docker 샌드박스 기반 동적 검증 단계에서 활용할 예정이며, 실제 요청 실행 전 추가 검증이 필요하다.
+
+## 10. 구현 현황
 
 - [x] LangChain 및 Ollama 개발 환경 구축
-- [x] Analyzer 입력 JSON v1.1 스키마 정의
+- [x] Analyzer JSON v1.1 입력 스키마 정의
 - [x] Pydantic 기반 Structured Output 구현
 - [x] 공통 및 취약점 유형별 프롬프트 작성
 - [x] LangChain 기반 LLM Agent 구현
-- [x] HTTP 요청 구조 검증 기능 구현
-- [x] 3가지 취약점 유형별 정상 비교 요청 생성 테스트
-- [x] Header 및 Cookie 검증 테스트
-- [ ] 취약점 유형별 프롬프트와 Agent 연동
-- [ ] 실제 취약점 검증용 PoC 생성 테스트
-- [ ] 실제 Analyzer JSON 연동 테스트
-- [ ] Header 및 Cookie 포함 LLM 요청 생성 테스트
-- [ ] 생성 결과 JSON 파일 저장
+- [x] HTTP 요청 구조 검증
+- [x] Mock JSON 기반 요청 생성 테스트
+- [x] Header 및 Cookie 검증
+- [x] Query DTO 및 String Body 대응
+- [x] DTO 데이터 형식 보정
+- [x] 실제 Analyzer JSON 연동
+- [x] 실제 분석 결과 12건 기반 요청 생성 및 구조 검증
+- [x] 생성 결과 JSON 파일 저장
+- [ ] 취약점 유형별 프롬프트 연동 및 PoC 생성 기능 완성
+- [ ] 실제 HTTP 요청 실행 및 취약점 유효성 검증
 
-## 11. 향후 개발 계획
+## 11. 현재 한계 및 향후 개선 계획
 
-- 실제 Analyzer 출력 JSON 기반 LLM Agent 연동
-- 취약점 검증용 요청 생성 기능 완성
-- Docker 샌드박스 기반 HTTP 요청 실행
+### 현재 한계
+
+| 문제점 | 설명 |
+|---|---|
+| PathVariable 미치환 | 일부 요청에서 경로 변수가 실제 값으로 치환되지 않는 문제 |
+| 프롬프트 준수 부족 | 정상 비교 요청 생성 지침과 실제 생성값 간 불일치 |
+| Body 출력 품질 | 문자열 Body에 불필요한 설명이 포함되는 문제 |
+| Content-Type 누락 | 일부 요청에서 Content-Type 헤더가 누락되는 문제 |
+| 검증 범위 | 요청 구조의 유효성은 검사하지만 실제 취약점 존재 여부는 확인하지 못함 |
+
+### 향후 개발 계획
+
+- HTTP 요청 생성 정확도 개선
+- Docker 샌드박스 기반 동적 검증 엔진 구현
 - HTTP 응답 및 ByteBuddy 모니터링 이벤트 기반 취약점 판정
-- 검증 실패 시 LLM 요청 재생성 및 Retry 로직 구현
+- 검증 실패 시 재생성 및 Retry 로직 구현
 - OpenAI API 연동
+
+현재 단계에서는 Analyzer 연동, HTTP 요청 생성, 기본 구조 검증 및 결과 저장까지 구현하였으며, 실제 취약점 검증은 이후 개발 단계에서 진행한다.

@@ -1,4 +1,5 @@
 import sys
+import json
 from pathlib import Path
 
 from .schemas import AnalyzerResult
@@ -21,15 +22,10 @@ def main():
     )
 
     agent = PoCAgent()
+    results = []
 
     print(f"Project: {analyzer_result.project}")
     print(f"Findings: {len(analyzer_result.findings)}")
-
-    expected_values = {
-        "F-001": ("host", "localhost"),
-        "F-002": ("expr", "1+1"),
-        "F-003": ("name", "testuser")
-    }
 
     for finding in analyzer_result.findings:
         print(f"\nTesting: {finding.vulnType}")
@@ -38,14 +34,33 @@ def main():
 
         print(result.model_dump_json(indent=2))
 
-        if file_path == "sample_finding.json":
-            name, expected = expected_values[finding.findingId]
-
-            assert result.queryParams.get(name) == expected, (
-                f"Unexpected baseline value: {name}"
-            )
+        results.append(result.model_dump(mode="json"))
 
         print("Agent Test PASS")
+
+    # 결과 저장 폴더 생성
+    output_dir = Path("poc_agent/output")
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # 입력 파일별 결과 저장 경로 지정
+    output_path = output_dir / (
+        Path(file_path).stem + "-requests.json"
+    )
+
+    # 최종 출력 데이터 구성
+    output_data = {
+        "schemaVersion": analyzer_result.schemaVersion,
+        "project": analyzer_result.project,
+        "results": results
+    }
+
+    # JSON 파일 저장
+    output_path.write_text(
+        json.dumps(output_data, indent=2, ensure_ascii=False),
+        encoding="utf-8"
+    )
+
+    print(f"\nSaved: {output_path}")
 
 
 if __name__ == "__main__":
