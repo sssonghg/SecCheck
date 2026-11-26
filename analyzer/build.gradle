@@ -1,5 +1,6 @@
 plugins {
     id 'java'
+    id 'application'
 }
 
 repositories {
@@ -10,6 +11,10 @@ dependencies {
     implementation 'com.github.javaparser:javaparser-core:3.25.10'
     implementation 'com.google.code.gson:gson:2.10.1'
     implementation 'org.yaml:snakeyaml:2.2'
+}
+
+application {
+    mainClass = 'com.seccheck.analyzer.Main'
 }
 
 tasks.withType(JavaCompile).configureEach {
