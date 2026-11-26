@@ -8,7 +8,9 @@ class BodyField(BaseModel):
 
 class Parameter(BaseModel):
     name: str
-    in_: Literal["query", "path", "body"] = Field(alias="in")
+    in_: Literal[
+        "query", "path", "body", "header", "cookie"
+    ] = Field(alias="in")
     javaType: str
     required: bool
     defaultValue: str | None = None

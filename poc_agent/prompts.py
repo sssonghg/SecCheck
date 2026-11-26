@@ -24,6 +24,10 @@ Rules:
     - expr: 1+1
     - name: testuser
     - count: 1
+14. Place header parameters in headers.
+15. Place cookie parameters in the Cookie header.
+16. Separate multiple cookies with a semicolon.
+17. Include all required headers and cookies.
 """
 
 VULN_PROMPTS = {

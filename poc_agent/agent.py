@@ -1,5 +1,6 @@
 from langchain_ollama import ChatOllama
 from urllib.parse import unquote
+from http.cookies import SimpleCookie
 
 from .schemas import Finding, PoCRequest
 from .prompts import poc_prompt
@@ -83,6 +84,14 @@ class PoCAgent:
                 f"Invalid endpoint: {result.endpoint}"
             )
 
+        headers = {
+            key.lower(): value
+            for key, value in result.headers.items()
+        }
+
+        cookies = SimpleCookie()
+        cookies.load(headers.get("cookie", ""))
+
         for param in endpoint.params:
 
             if param.in_ == "query" and param.required:
@@ -115,12 +124,19 @@ class PoCAgent:
                                 f"Invalid body field: {key}"
                             )
 
-        if endpoint.consumes and result.body is not None:
-            headers = {
-                key.lower(): value
-                for key, value in result.headers.items()
-            }
+            elif param.in_ == "header" and param.required:
+                if param.name.lower() not in headers:
+                    raise ValueError(
+                        f"Missing header: {param.name}"
+                    )
 
+            elif param.in_ == "cookie" and param.required:
+                if param.name not in cookies:
+                    raise ValueError(
+                        f"Missing cookie: {param.name}"
+                    )
+
+        if endpoint.consumes and result.body is not None:
             content_type = headers.get(
                 "content-type", ""
             ).split(";")[0].strip().lower()
