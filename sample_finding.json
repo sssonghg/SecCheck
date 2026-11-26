@@ -1,0 +1,110 @@
+{
+  "schemaVersion": "1.0",
+  "project": "seccheck-test",
+  "findings": [
+    {
+      "findingId": "F-001",
+      "vulnType": "COMMAND_INJECTION",
+      "endpoint": {
+        "httpMethods": ["GET"],
+        "paths": ["/api/cmd/ping"],
+        "consumes": [],
+        "params": [
+          {
+            "name": "host",
+            "in": "query",
+            "javaType": "String",
+            "required": true,
+            "tainted": true
+          },
+          {
+            "name": "count",
+            "in": "query",
+            "javaType": "int",
+            "required": false,
+            "defaultValue": "1",
+            "tainted": false
+          }
+        ]
+      },
+      "location": {
+        "file": "CmdController.java",
+        "className": "CmdController",
+        "method": "ping",
+        "startLine": 18,
+        "endLine": 30
+      },
+      "sink": {
+        "call": "ProcessBuilder.start",
+        "line": 27,
+        "code": ""
+      },
+      "taintPath": [],
+      "methodSource": ""
+    },
+    {
+      "findingId": "F-002",
+      "vulnType": "SPEL_INJECTION",
+      "endpoint": {
+        "httpMethods": ["GET"],
+        "paths": ["/vuln/spel"],
+        "consumes": [],
+        "params": [
+          {
+            "name": "expr",
+            "in": "query",
+            "javaType": "String",
+            "required": true,
+            "tainted": true
+          }
+        ]
+      },
+      "location": {
+        "file": "SpelController.java",
+        "className": "SpelController",
+        "method": "calculate",
+        "startLine": 10,
+        "endLine": 20
+      },
+      "sink": {
+        "call": "getValue",
+        "line": 15,
+        "code": ""
+      },
+      "taintPath": [],
+      "methodSource": ""
+    },
+    {
+      "findingId": "F-003",
+      "vulnType": "SQL_INJECTION",
+      "endpoint": {
+        "httpMethods": ["GET"],
+        "paths": ["/vuln/sql"],
+        "consumes": [],
+        "params": [
+          {
+            "name": "name",
+            "in": "query",
+            "javaType": "String",
+            "required": true,
+            "tainted": true
+          }
+        ]
+      },
+      "location": {
+        "file": "SqlController.java",
+        "className": "SqlController",
+        "method": "search",
+        "startLine": 10,
+        "endLine": 20
+      },
+      "sink": {
+        "call": "JdbcTemplate.queryForList",
+        "line": 15,
+        "code": ""
+      },
+      "taintPath": [],
+      "methodSource": ""
+    }
+  ]
+}
